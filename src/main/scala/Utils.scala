@@ -1,5 +1,4 @@
 import java.text.SimpleDateFormat
-import java.util
 import java.util.Properties
 
 import org.apache.kafka.clients.producer._
@@ -14,8 +13,12 @@ import org.I0Itec.zkclient.ZkConnection
 import org.I0Itec.zkclient.exception.ZkMarshallingError
 import org.I0Itec.zkclient.serialize.ZkSerializer
 import java.util
+
 import org.apache.kafka.clients.consumer.KafkaConsumer
 import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.serialization.Serdes
+import org.apache.kafka.streams.StreamsConfig
+
 import scala.collection.JavaConverters._
 
 
@@ -50,6 +53,7 @@ object Utils {
       } catch {
         case e:Throwable => e.printStackTrace //println(s"Topic exists. name: $topicName")
       }
+      Thread.sleep(1000)
     } else {
             println(s"Topic already exists. name: $topicName")
     }
@@ -74,9 +78,25 @@ object Utils {
     kafkaConsumerProperties.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer")
     kafkaConsumerProperties.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer")
     kafkaConsumerProperties.put("group.id", groupId)
+    kafkaConsumerProperties.put("auto.offset.reset", "earliest")
 
     kafkaConsumerProperties
   }
+
+  //we set kafka stream properties
+  def getkafkaStreamProperties() : Properties = {
+
+    val  kafkfaStreamProperties : Properties= new Properties()
+    kafkfaStreamProperties.put(StreamsConfig.APPLICATION_ID_CONFIG, "streams-pipe")
+    kafkfaStreamProperties.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092")
+    kafkfaStreamProperties.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass())
+    kafkfaStreamProperties.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass())
+    kafkfaStreamProperties.put(StreamsConfig.CACHE_MAX_BYTES_BUFFERING_CONFIG, (10 * 1024 * 1024L).toString) // Enable record cache of size 10 MB
+    kafkfaStreamProperties.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, "1000") // Set commit interval to 1 second.
+
+    kafkfaStreamProperties
+  }
+
 
 
   //We read the file
@@ -130,6 +150,17 @@ object Utils {
     }
   }
 
+  //send data to kafka using just the topic name
+  def sendDataToKafkaTopic(kafkaProducer: KafkaProducer[String, String], topic: String , key: String,  value: String): Unit = {
+
+      try {
+        val record = new ProducerRecord(topic, key, value)
+        kafkaProducer.send(record)
+    } catch{
+        case e: Throwable => e.printStackTrace()
+      }
+  }
+
   //Here we read kafka partition
   def readKafkaPartition(topic:String, partitionNumber:Int) {
 
@@ -137,9 +168,9 @@ object Utils {
 
     //consumer.subscribe(util.Collections.singletonList(TOPIC))
 
-    val partition3: TopicPartition  = new TopicPartition(topic, partitionNumber)
+    val partitionNum: TopicPartition  = new TopicPartition(topic, partitionNumber)
     //TopicPartition partition1 = new TopicPartition(TOPIC, 1)
-    consumerPartition.assign(util.Collections.singletonList(partition3))
+    consumerPartition.assign(util.Collections.singletonList(partitionNum))
 
     //we retrieve data from kafka
     while (true) {
@@ -162,6 +193,53 @@ object Utils {
       }
 
     }
+  }
+
+  //extract timestamp string
+  def extractTimestampFromString(str: String): String = {
+    val pattern = "(\\d{4}/\\d{2}/\\d{2} \\d{2}:\\d{2}:\\d{2}) .*".r
+
+    str match {
+      case pattern(timestamp) => timestamp
+      case _ => ""
+    }
+  }
+
+  //Read topic input  and feed topic output with the key = timestamp
+  def readKafkaPartitionAndFeedTopic(topicInput:String, partitionNumber:Int, topicOutput: String) {
+
+    val consumerPartition = new KafkaConsumer[String, String](getkafkaConsumerProperties("something"))
+    val partitionNum: TopicPartition  = new TopicPartition(topicInput, partitionNumber)
+    consumerPartition.assign(util.Collections.singletonList(partitionNum))
+
+    val records = consumerPartition.poll(30000)  //during 30 seconds we retrieve data
+
+    if (records.iterator().hasNext) {
+      //We create the producer
+      val producer = new KafkaProducer[String, String](getkafkaProducerProperties)
+
+      for (rec <- records.asScala) {
+
+        //timestamp extraction and conversion to mn
+        val timeStampExtract = getTimestamp(extractTimestampFromString(rec.value()))
+
+        timeStampExtract match {
+          case Success(timeStampDate) => {
+                                          val timeStampMn = timeStampDate/60000
+
+                                          //we send data with the key equal the timestamp
+                                          sendDataToKafkaTopic(producer, topicOutput, timeStampMn.toString, rec.value())
+                                          println(s"Data sent to the topic '$topicOutput")
+                                        }
+          case Failure(st) => println(s"Failed to extract timestamp in the line : $st")
+
+        }
+
+      }
+    } else {
+      println(s"There is not data  for the topic '$topicInput' on the partition $partitionNumber")
+    }
+
   }
 
 }

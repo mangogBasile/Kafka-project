@@ -9,7 +9,7 @@ object Producer extends App {
 
   //we create the topic
   createTopic(topicName = TOPIC, numPartitions = 4)
-  Thread.sleep(10)
+  //Thread.sleep(10)
 
   //We create the producer
   val producer = new KafkaProducer[String, String](getkafkaProducerProperties)
