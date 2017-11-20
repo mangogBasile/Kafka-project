@@ -41,7 +41,6 @@ object KafkaStreamTest extends App {
 
 
 
-
   //we write the count result to another output and provide overridden serialization methods for Long
   //.to("stream-grouped-output", Produced.with[scala.Predef.String, java.lang.Long])
 
@@ -86,7 +85,6 @@ object KafkaStreamTest extends App {
                 val iterator = windowStore.fetch(keyToRead, timeFrom, timeTo)
               //println(s"$keyToRead , in the for")
                 while (iterator.hasNext) {
-                //  println("in the while")
                   val next = iterator.next
                   println(s"Log type: $topicToCount, Timestamp:$keyToRead,  total events:${next.value}, windows timestamp:${next.key}")
                 }
