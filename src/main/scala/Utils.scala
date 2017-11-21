@@ -13,11 +13,15 @@ import org.I0Itec.zkclient.ZkConnection
 import org.I0Itec.zkclient.exception.ZkMarshallingError
 import org.I0Itec.zkclient.serialize.ZkSerializer
 import java.util
+import java.util.concurrent.CountDownLatch
 
 import org.apache.kafka.clients.consumer.KafkaConsumer
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.serialization.Serdes
-import org.apache.kafka.streams.StreamsConfig
+import org.apache.kafka.common.utils.Bytes
+import org.apache.kafka.streams.kstream._
+import org.apache.kafka.streams.{KafkaStreams, StreamsBuilder, StreamsConfig, Topology}
+import org.apache.kafka.streams.state.WindowStore
 
 import scala.collection.JavaConverters._
 
@@ -82,6 +86,7 @@ object Utils {
 
     kafkaConsumerProperties
   }
+
 
   //we set kafka stream properties
   def getkafkaStreamProperties() : Properties = {
@@ -240,6 +245,52 @@ object Utils {
       println(s"There is not data  for the topic '$topicInput' on the partition $partitionNumber")
     }
 
+  }
+
+
+  //This function return a topology for a kafka stream topic
+  def getTopology(topicToCount : String) : Topology = {
+    val builder = new StreamsBuilder()
+
+    //we create our streaming source from the topic info
+    val streamSource: KStream[String, String] = builder.stream(topicToCount)
+
+    //we created a window store named "CountsWindowStore" that contains the counts for each key in 1-minute windows
+
+    val countsError: KTable[Windowed[scala.Predef.String], java.lang.Long] = streamSource.groupByKey()
+      .windowedBy(TimeWindows.of(60000))
+      .count(Materialized.as[scala.Predef.String, java.lang.Long, WindowStore[Bytes, Array[Byte]]]("CountsWindowStore") withKeySerde (Serdes.String()))
+
+
+    //we write the count result to another output and provide overridden serialization methods for Long
+    //countsError.toStream().to(Windowed[String],Serdes.Long() ,"stream-grouped-output")
+
+    //Here we glance on our topology
+    val topology = builder.build()
+
+    topology
+  }
+
+  //this function create a stream configuration for kafka
+  def configureKafkaStream(topicToCount : String): KafkaStreams = {
+    val kafkfaStreamProperties = getkafkaStreamProperties()
+    val topology: Topology = getTopology(topicToCount)
+    // we print the topology build
+    println(topology.describe())
+
+    //we can now build the Streams client
+    val streams: KafkaStreams = new KafkaStreams(topology, kafkfaStreamProperties)
+    val latch = new CountDownLatch(3)
+
+    // attach shutdown handler to catch control-c
+    Runtime.getRuntime().addShutdownHook(new Thread(s"streams-shutdown-hook-$topicToCount") {
+      override def run() {
+        streams.close() //we close the stream
+        latch.countDown() //we wait 5s until all workers have completed before closing
+      }
+    })
+
+    streams
   }
 
 }
